@@ -35,6 +35,7 @@ def tr_exp_naive(X, m=200, k_max=10):
         fk *= k
         B = B@X
         res += np.sum((B / fk) * V)
+    del V, B
     return np.abs(res)
 
 def tr_scipy(X, m=200):
