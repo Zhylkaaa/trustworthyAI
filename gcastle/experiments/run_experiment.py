@@ -68,6 +68,9 @@ if __name__ == '__main__':
     if args.exponent_type == 'tr_krylov':
         additional_kwargs['k'] = 5
 
+    if args.exponent_type == 'bfs':
+        additional_kwargs['k'] = 40
+
     # rl learn
     rl = RL(nb_epoch=args.nb_epoch,
             batch_size=args.batch_size,

@@ -38,6 +38,41 @@ def tr_exp_naive(X, m=200, k_max=10):
     del V, B
     return np.abs(res)
 
+
+@jit(nopython=True, nogil=True, parallel=True)
+def bfs_cycle(X, k=40):
+    weights = np.zeros(X.shape[0], dtype=np.float32)
+
+    for i in prange(X.shape[0]):
+        path_weight = np.zeros(X.shape[0], dtype=np.float32)
+        steps_reached = np.zeros(X.shape[0], dtype=np.int32)
+        path_weight[i] = 0
+        steps_reached[i] = 0
+        head = 0
+        tail = -1
+        queue = np.zeros(X.shape[0], dtype=np.int32)
+        queue[head] = i
+        while tail < head:
+            tail += 1
+            v = queue[tail]
+            if X[v, i] > 1e-3:
+                weights[steps_reached[v]] += path_weight[v] + X[v, i]
+                break
+            for u in range(X.shape[0]):
+                if steps_reached[u] == 0 and X[v, u] > 1e-3:
+                    steps_reached[u] = steps_reached[v] + 1
+                    path_weight[u] = path_weight[v] + X[v, u]
+                    head += 1
+                    queue[head] = u
+
+    cyclicnes = np.float32(0.)
+    for i in range(1, X.shape[0]):
+        if weights[i] > 0:
+            for j in range(i, k, i):
+                cyclicnes += weights[i] * (j // i)
+    return cyclicnes
+
+
 def tr_scipy(X, m=200):
     V = np.random.choice(np.array([-1. / m, 1. / m], dtype=np.float32), size=(X.shape[0], m))
     tr = np.sum(V * expm_multiply(X, V))
@@ -220,6 +255,8 @@ class get_Reward(object):
             cycness = tr_krylov(np.array(graph_batch, dtype=np.float32), m=self.m, k=self.k)
         elif self.exponent_type == 'tr_schur':
             cycness = np.sum(np.exp(np.diag(schur(np.array(graph_batch, dtype=np.float32))[0]))) - self.maxlen
+        elif self.exponent_type == 'bfs':
+            cycness = bfs_cycle(np.array(graph_batch, dtype=np.float32), k=self.k)
         else:
             raise ValueError('Unknown exponent type')
         reward = score + lambda1 * float(cycness>1e-5) + lambda2*cycness
