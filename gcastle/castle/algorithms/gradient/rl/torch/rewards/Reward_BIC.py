@@ -15,12 +15,14 @@
 
 import logging
 import numpy as np
-from scipy.linalg import expm as matrix_exponential
+from scipy.linalg import expm as matrix_exponential, schur
+from scipy.sparse.linalg import expm_multiply
 from scipy.spatial.distance import pdist
 from sklearn.gaussian_process import GaussianProcessRegressor as GPR
 from sklearn.preprocessing import PolynomialFeatures
 
-from numba import jit
+from numba import jit, prange
+from numpy.linalg import norm
 
 
 @jit(nopython=True, nogil=True, parallel=False)
@@ -33,6 +35,47 @@ def tr_exp_naive(X, m=200, k_max=10):
         fk *= k
         B = B@X
         res += np.sum((B / fk) * V)
+    return np.abs(res)
+
+def tr_scipy(X, m=200):
+    V = np.random.choice(np.array([-1. / m, 1. / m], dtype=np.float32), size=(X.shape[0], m))
+    tr = np.sum(V * expm_multiply(X, V))
+    return np.abs(tr)
+
+
+@jit(nopython=True, nogil=True)
+def _lanczos_singe_vector_matrixes(A, v, k=10):
+    k = min(k, v.shape[0])
+    q_prev = np.zeros_like(v, dtype=np.float32)
+    q = v / norm(v)
+    beta = np.float32(0.)
+    Q = np.zeros((v.shape[0], k), dtype=np.float32)
+    T = np.zeros((k, k), dtype=np.float32)
+
+    for i in range(k):
+        Q[:, i] = q
+        if i > 0:
+            T[i - 1, i] = T[i, i - 1] = beta
+        q_next = A@q - beta*q_prev
+        alpha = q_next @ q
+        T[i, i] = alpha
+        q_next = q_next - alpha*q
+        beta = norm(q_next)
+        if beta < 1e-6:
+            break
+        q_prev = q
+        q = q_next / beta
+
+    return Q, T
+
+
+def tr_krylov(A, m=200, k=10):
+    V = np.random.choice(np.array([-1., 1.], dtype=np.float32), size=(m, A.shape[0]))
+    # Qs, Ts = _lanczos_vectors_matrixes(A, V)
+    res = 0.
+    for v in V:
+        Q, T = _lanczos_singe_vector_matrixes(A, v, k=k)
+        res += (v * norm(v) / m) @ Q @ (matrix_exponential(T)[:, 0])
     return np.abs(res)
 
 
@@ -68,6 +111,7 @@ class get_Reward(object):
         self.poly = PolynomialFeatures()
         self.exponent_type = exponent_type
         self.m = kwargs.get('m', 200)
+        self.k = kwargs.get('k', 10)
 
     def cal_rewards(self, graphs, lambda1, lambda2):
         rewards_batches = []
@@ -168,7 +212,13 @@ class get_Reward(object):
         if self.exponent_type == 'original':
             cycness = np.trace(matrix_exponential(np.array(graph_batch))) - self.maxlen
         elif self.exponent_type == 'trace_naive':
-            cycness = tr_exp_naive(np.array(graph_batch, dtype=np.float32), m=self.m, k_max=10)
+            cycness = tr_exp_naive(np.array(graph_batch, dtype=np.float32), m=self.m, k_max=self.k)
+        elif self.exponent_type == 'trace_scipy':
+            cycness = tr_scipy(np.array(graph_batch, dtype=np.float32), m=self.m)
+        elif self.exponent_type == 'tr_krylov':
+            cycness = tr_krylov(np.array(graph_batch, dtype=np.float32), m=self.m, k=self.k)
+        elif self.exponent_type == 'tr_schur':
+            cycness = np.sum(np.exp(np.diag(schur(np.array(graph_batch, dtype=np.float32))[0]))) - self.maxlen
         else:
             raise ValueError('Unknown exponent type')
         reward = score + lambda1 * float(cycness>1e-5) + lambda2*cycness

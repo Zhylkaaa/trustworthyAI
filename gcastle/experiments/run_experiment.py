@@ -63,8 +63,10 @@ if __name__ == '__main__':
     true_dag, X = dataset.B, dataset.X
 
     additional_kwargs = {}
-    if args.exponent_type == 'trace_naive':
-        additional_kwargs['m'] = 200
+    additional_kwargs['m'] = 200
+    additional_kwargs['k'] = 10
+    if args.exponent_type == 'tr_krylov':
+        additional_kwargs['k'] = 5
 
     # rl learn
     rl = RL(nb_epoch=args.nb_epoch,
